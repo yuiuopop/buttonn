@@ -4,6 +4,10 @@ import sqlite3
 import threading
 import math
 
+# Global state for bulk upload batching
+upload_batches = {}
+upload_lock = threading.Lock()
+
 # ================= Configuration =================
 # Replace with your actual Bot Token from BotFather
 BOT_TOKEN = "8756272091:AAGEvJTyq0jPh1aFzDeYhvZ39c1D-TGCEok"
@@ -53,6 +57,10 @@ def init_db():
         cursor.execute("ALTER TABLE users ADD COLUMN media_received INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    try:
+        cursor.execute("ALTER TABLE media ADD COLUMN file_unique_id TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
 def add_user(user_id, username, starting_points, referred_by=None):
@@ -84,12 +92,18 @@ def get_points(user_id):
     user = get_user(user_id)
     return user[2] if user else 0
 
-def add_media(file_id, media_type):
+def add_media(file_id, media_type, file_unique_id=None):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO media (file_id, media_type) VALUES (?, ?)", (file_id, media_type))
+    cursor.execute("INSERT INTO media (file_id, media_type, file_unique_id) VALUES (?, ?, ?)", (file_id, media_type, file_unique_id))
     conn.commit()
     return cursor.lastrowid
+
+def check_duplicate_media(file_unique_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM media WHERE file_unique_id = ?", (file_unique_id,))
+    return cursor.fetchone() is not None
 
 def get_random_media():
     conn = get_db()
@@ -461,6 +475,20 @@ def handle_add_points(message):
     except ValueError:
         bot.reply_to(message, "Invalid user ID or amount.")
 
+def flush_upload_batch(chat_id):
+    with upload_lock:
+        if chat_id in upload_batches:
+            saved = upload_batches[chat_id]['saved']
+            dupes = upload_batches[chat_id]['dupes']
+            del upload_batches[chat_id]
+            try:
+                if dupes > 0:
+                    bot.send_message(chat_id, f"✅ Successfully added {saved} media item(s).\n⚠️ Ignored {dupes} duplicate(s)!")
+                else:
+                    bot.send_message(chat_id, f"✅ Successfully added {saved} media item(s) to the database!")
+            except:
+                pass
+
 @bot.message_handler(content_types=['photo', 'video', 'document'])
 def handle_media_upload(message):
     if not is_admin(message.from_user.id):
@@ -468,19 +496,36 @@ def handle_media_upload(message):
         
     if message.photo:
         file_id = message.photo[-1].file_id
+        file_unique_id = message.photo[-1].file_unique_id
         media_type = 'photo'
     elif message.video:
         file_id = message.video.file_id
+        file_unique_id = message.video.file_unique_id
         media_type = 'video'
     elif message.document:
         file_id = message.document.file_id
+        file_unique_id = message.document.file_unique_id
         media_type = 'document'
     else:
         return
         
-    m_id = add_media(file_id, media_type)
-    # Silently add media to avoid spamming the admin on bulk uploads
-    print(f"Media added by admin. DB ID: {m_id}, Type: {media_type}")
+    with upload_lock:
+        if message.chat.id not in upload_batches:
+            upload_batches[message.chat.id] = {'saved': 0, 'dupes': 0, 'timer': None}
+        
+        batch = upload_batches[message.chat.id]
+        
+        if check_duplicate_media(file_unique_id):
+            batch['dupes'] += 1
+        else:
+            add_media(file_id, media_type, file_unique_id)
+            batch['saved'] += 1
+            
+        if batch['timer']:
+            batch['timer'].cancel()
+            
+        batch['timer'] = threading.Timer(2.0, flush_upload_batch, args=(message.chat.id,))
+        batch['timer'].start()
 
 # ================= Main Execution =================
 if __name__ == "__main__":
