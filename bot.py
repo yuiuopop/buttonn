@@ -10,10 +10,10 @@ upload_lock = threading.Lock()
 
 # ================= Configuration =================
 # Replace with your actual Bot Token from BotFather
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "8756272091:AAGEvJTyq0jPh1aFzDeYhvZ39c1D-TGCEok"
 
 # List of admin Telegram User IDs
-ADMIN_IDS = [123456789] 
+ADMIN_IDS = [8305774350] 
 
 # Economics
 FREE_STARTING_POINTS = 10
