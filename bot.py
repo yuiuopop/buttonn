@@ -220,6 +220,50 @@ def admin_callback_handler(call):
         menu_id = int(data.split(":")[1])
         bot.send_message(chat_id, "Previewing:")
         render_menu(chat_id, menu_id)
+        
+    elif data.startswith("admin_set_kbtype:"):
+        if chat_id not in admin_states or 'name' not in admin_states[chat_id]:
+            bot.answer_callback_query(call.id)
+            return
+        kb_type = data.split(":")[1]
+        m_name = admin_states[chat_id]['name']
+        m_text = admin_states[chat_id]['text']
+        
+        execute_query("INSERT INTO menus (name, message_text, keyboard_type) VALUES (?, ?, ?)", 
+                      (m_name, m_text, kb_type), commit=True)
+        
+        bot.edit_message_text(f"Menu '{m_name}' created successfully! Use /admin to manage it.", chat_id=chat_id, message_id=call.message.message_id)
+        del admin_states[chat_id]
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("admin_btnaction:"):
+        if chat_id not in admin_states or 'btn_text' not in admin_states[chat_id]:
+            bot.answer_callback_query(call.id)
+            return
+        
+        action_type = data.split(":")[1]
+        admin_states[chat_id]['action_type'] = action_type
+        
+        if action_type == "nav":
+            menus = execute_query("SELECT id, name FROM menus", fetchall=True)
+            m_str = "\n".join([f"ID {m[0]}: {m[1]}" for m in menus])
+            msg = bot.send_message(chat_id, f"Available Menus:\n{m_str}\n\nPlease reply with the ID of the menu to navigate to:")
+            bot.register_next_step_handler(msg, process_btn_data)
+            
+        elif action_type == "url":
+            msg = bot.send_message(chat_id, "Please reply with the full URL (e.g., https://google.com):")
+            bot.register_next_step_handler(msg, process_btn_data)
+            
+        elif action_type == "msg":
+            msg = bot.send_message(chat_id, "Please reply with the text to show when the button is clicked:")
+            bot.register_next_step_handler(msg, process_btn_data)
+        
+        bot.answer_callback_query(call.id)
+        
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
 
 # --- Admin Menu Creation Steps ---
 def process_menu_name(message):
@@ -241,21 +285,7 @@ def process_menu_text(message):
     )
     bot.send_message(chat_id, "What type of buttons should this menu use?", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_set_kbtype:"))
-def process_menu_kbtype(call):
-    chat_id = call.message.chat.id
-    if chat_id not in admin_states or 'name' not in admin_states[chat_id]:
-        return
-    kb_type = call.data.split(":")[1]
-    
-    m_name = admin_states[chat_id]['name']
-    m_text = admin_states[chat_id]['text']
-    
-    execute_query("INSERT INTO menus (name, message_text, keyboard_type) VALUES (?, ?, ?)", 
-                  (m_name, m_text, kb_type), commit=True)
-    
-    bot.edit_message_text(f"Menu '{m_name}' created successfully! Use /admin to manage it.", chat_id=chat_id, message_id=call.message.message_id)
-    del admin_states[chat_id]
+
 
 # --- Admin Button Creation Steps ---
 def process_btn_text(message):
@@ -270,28 +300,7 @@ def process_btn_text(message):
     
     bot.send_message(chat_id, "What should this button do?", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_btnaction:"))
-def process_btn_action(call):
-    chat_id = call.message.chat.id
-    if chat_id not in admin_states or 'btn_text' not in admin_states[chat_id]:
-        return
-    
-    action_type = call.data.split(":")[1]
-    admin_states[chat_id]['action_type'] = action_type
-    
-    if action_type == "nav":
-        menus = execute_query("SELECT id, name FROM menus", fetchall=True)
-        m_str = "\n".join([f"ID {m[0]}: {m[1]}" for m in menus])
-        msg = bot.send_message(chat_id, f"Available Menus:\n{m_str}\n\nPlease reply with the ID of the menu to navigate to:")
-        bot.register_next_step_handler(msg, process_btn_data)
-        
-    elif action_type == "url":
-        msg = bot.send_message(chat_id, "Please reply with the full URL (e.g., https://google.com):")
-        bot.register_next_step_handler(msg, process_btn_data)
-        
-    elif action_type == "msg":
-        msg = bot.send_message(chat_id, "Please reply with the text to show when the button is clicked:")
-        bot.register_next_step_handler(msg, process_btn_data)
+
 
 def process_btn_data(message):
     if not message.text: return
