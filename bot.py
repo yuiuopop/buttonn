@@ -2,6 +2,7 @@ import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 import sqlite3
 import threading
+import math
 
 # ================= Configuration =================
 # Replace with your actual Bot Token from BotFather
@@ -110,12 +111,24 @@ def delete_media(media_id):
     conn.commit()
     return success
 
-def get_recent_media(limit=5):
+def get_media_page(limit, offset):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, media_type FROM media ORDER BY id DESC LIMIT ?", (limit,))
+    cursor.execute("SELECT id, media_type FROM media ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
     return cursor.fetchall()
-    
+
+def get_media_by_id(media_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_id, media_type FROM media WHERE id = ?", (media_id,))
+    return cursor.fetchone()
+
+def wipe_all_media():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM media")
+    conn.commit()
+
 def get_stats():
     conn = get_db()
     cursor = conn.cursor()
@@ -129,7 +142,7 @@ def get_stats():
     return users_count, media_count, total_received
 
 
-# ================= Keyboards =================
+# ================= UI & Keyboards =================
 def get_main_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_watch = KeyboardButton("📺 Watch Media")
@@ -142,6 +155,42 @@ def get_admin_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(KeyboardButton("📺 Watch Media"), KeyboardButton("💰 Balance"))
     markup.add(KeyboardButton("📁 Manage Media"), KeyboardButton("📊 User Stats"))
+    return markup
+
+def generate_manage_markup(page):
+    markup = InlineKeyboardMarkup()
+    
+    _, total_media, _ = get_stats()
+    limit = 5
+    offset = page * limit
+    total_pages = math.ceil(total_media / limit) if total_media > 0 else 1
+    
+    media_items = get_media_page(limit, offset)
+    
+    if media_items:
+        for m_id, m_type in media_items:
+            preview_btn = InlineKeyboardButton(f"👀 Preview [{m_type.upper()} {m_id}]", callback_data=f"preview_{m_id}_{page}")
+            delete_btn = InlineKeyboardButton(f"❌ Delete", callback_data=f"delmedia_{m_id}_{page}")
+            markup.add(preview_btn, delete_btn)
+            
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"manage_page_{page-1}"))
+        else:
+            nav_buttons.append(InlineKeyboardButton(" ", callback_data="ignore"))
+            
+        nav_buttons.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="ignore"))
+        
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"manage_page_{page+1}"))
+        else:
+            nav_buttons.append(InlineKeyboardButton(" ", callback_data="ignore"))
+            
+        markup.row(*nav_buttons)
+        markup.add(InlineKeyboardButton("🚨 Wipe All Media 🚨", callback_data="wipe_media_init"))
+    else:
+        markup.add(InlineKeyboardButton("No media found.", callback_data="ignore"))
+        
     return markup
 
 
@@ -272,35 +321,11 @@ def handle_manage_media(message):
     if not is_admin(message.from_user.id):
         return
         
-    _, media_count, _ = get_stats()
-    recent = get_recent_media(5) # Get top 5 recent
+    _, total_media, _ = get_stats()
+    text = f"📁 **Media Management**\nTotal pieces of media in library: {total_media}\n\n_Use the buttons below to preview, delete, or navigate._"
     
-    text = f"📁 **Media Management**\nTotal pieces of media in library: {media_count}\n\n"
-    text += "_To delete an item, you can use the inline buttons below, or use the command `/delmedia <ID>`_\n\n"
-    
-    markup = InlineKeyboardMarkup()
-    if not recent:
-        text += "No media uploaded yet."
-    else:
-        text += "**Recent Media Added:**"
-        for m_id, m_type in recent:
-            markup.add(InlineKeyboardButton(f"❌ Delete ID: {m_id} [{m_type.upper()}]", callback_data=f"delmedia_{m_id}"))
-            
+    markup = generate_manage_markup(0)
     bot.reply_to(message, text, reply_markup=markup, parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("delmedia_"))
-def handle_delete_callback(call):
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "Unauthorized.")
-        return
-        
-    media_id = call.data.split('_')[1]
-    
-    if delete_media(media_id):
-        bot.answer_callback_query(call.id, f"✅ Media ID {media_id} Deleted!")
-        bot.edit_message_text(f"✅ Automatically deleted Media ID: {media_id}\n\n_Tip: Re-open manage menu to see updated list._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    else:
-        bot.answer_callback_query(call.id, "Media not found or already deleted.")
 
 @bot.message_handler(commands=['delmedia'])
 def handle_delmedia_command(message):
@@ -317,6 +342,101 @@ def handle_delmedia_command(message):
         bot.reply_to(message, f"✅ Media ID {media_id} has been successfully removed from the library.")
     else:
         bot.reply_to(message, "❌ Media not found. It may have already been deleted.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("manage_page_"))
+def handle_manage_page(call):
+    if not is_admin(call.from_user.id):
+        return bot.answer_callback_query(call.id, "Unauthorized.")
+    
+    page = int(call.data.split('_')[2])
+    markup = generate_manage_markup(page)
+    _, total_media, _ = get_stats()
+    text = f"📁 **Media Management**\nTotal pieces of media in library: {total_media}\n\n_Use the buttons below to preview, delete, or navigate._"
+    
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "Already on this page.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("preview_"))
+def handle_preview(call):
+    if not is_admin(call.from_user.id):
+        return bot.answer_callback_query(call.id, "Unauthorized.")
+        
+    parts = call.data.split('_')
+    media_id = parts[1]
+    
+    media = get_media_by_id(media_id)
+    if not media:
+        return bot.answer_callback_query(call.id, "Media no longer exists in DB.")
+        
+    file_id, media_type = media
+    bot.answer_callback_query(call.id, "Sending preview...")
+    
+    msg_text = f"👀 **Preview of Media ID: {media_id}**"
+    try:
+        if media_type == 'photo':
+            bot.send_photo(call.message.chat.id, file_id, caption=msg_text, parse_mode="Markdown")
+        elif media_type == 'video':
+            bot.send_video(call.message.chat.id, file_id, caption=msg_text, parse_mode="Markdown")
+        else:
+            bot.send_document(call.message.chat.id, file_id, caption=msg_text, parse_mode="Markdown")
+    except Exception as e:
+        bot.send_message(call.message.chat.id, f"❌ Failed to preview Media ID {media_id}. The file might have been removed from Telegram servers.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delmedia_"))
+def handle_delete_callback(call):
+    if not is_admin(call.from_user.id):
+        return bot.answer_callback_query(call.id, "Unauthorized.")
+        
+    parts = call.data.split('_')
+    media_id = parts[1]
+    page = int(parts[2]) if len(parts) > 2 else 0
+    
+    if delete_media(media_id):
+        bot.answer_callback_query(call.id, f"✅ Deleted Media {media_id}!")
+    else:
+        bot.answer_callback_query(call.id, "Media not found.")
+        
+    # Refresh the page
+    markup = generate_manage_markup(page)
+    _, total_media, _ = get_stats()
+    text = f"📁 **Media Management**\nTotal pieces of media in library: {total_media}\n\n_Use the buttons below to preview, delete, or navigate._"
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except:
+        pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "wipe_media_init")
+def handle_wipe_init(call):
+    if not is_admin(call.from_user.id):
+        return bot.answer_callback_query(call.id, "Unauthorized.")
+        
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("⚠️ YES, DELETE EVERYTHING ⚠️", callback_data="wipe_media_confirm"))
+    markup.add(InlineKeyboardButton("❌ Cancel", callback_data="manage_page_0"))
+    
+    bot.edit_message_text("🚨 **WARNING!** 🚨\nAre you sure you want to permanently wipe all media from the database? This action cannot be undone.", 
+                          call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "wipe_media_confirm")
+def handle_wipe_confirm(call):
+    if not is_admin(call.from_user.id):
+        return bot.answer_callback_query(call.id, "Unauthorized.")
+        
+    wipe_all_media()
+    bot.answer_callback_query(call.id, "All media wiped successfully!")
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🔙 Back to Management", callback_data="manage_page_0"))
+    bot.edit_message_text("✅ All media has been successfully wiped from the database.",
+                          call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "ignore")
+def handle_ignore(call):
+    bot.answer_callback_query(call.id)
 
 @bot.message_handler(commands=['addpoints'])
 def handle_add_points(message):
