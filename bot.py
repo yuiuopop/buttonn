@@ -479,7 +479,8 @@ def handle_media_upload(message):
         return
         
     m_id = add_media(file_id, media_type)
-    bot.reply_to(message, f"✅ Media added to database!\nType: {media_type}\nMedia ID: {m_id}")
+    # Silently add media to avoid spamming the admin on bulk uploads
+    print(f"Media added by admin. DB ID: {m_id}, Type: {media_type}")
 
 # ================= Main Execution =================
 if __name__ == "__main__":
