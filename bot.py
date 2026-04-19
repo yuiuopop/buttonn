@@ -10,10 +10,10 @@ upload_lock = threading.Lock()
 
 # ================= Configuration =================
 # Replace with your actual Bot Token from BotFather
-BOT_TOKEN = "8756272091:AAGEvJTyq0jPh1aFzDeYhvZ39c1D-TGCEok"
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 
 # List of admin Telegram User IDs
-ADMIN_IDS = [8305774350] 
+ADMIN_IDS = [123456789] 
 
 # Economics
 FREE_STARTING_POINTS = 10
@@ -171,6 +171,27 @@ def get_admin_keyboard():
     markup.add(KeyboardButton("📁 Manage Media"), KeyboardButton("📊 User Stats"))
     return markup
 
+def generate_divisions_markup():
+    markup = InlineKeyboardMarkup()
+    _, total_media, _ = get_stats()
+    
+    if total_media == 0:
+        markup.add(InlineKeyboardButton("No media found.", callback_data="ignore"))
+        return markup
+        
+    chunk_size = 100
+    total_chunks = math.ceil(total_media / chunk_size)
+    
+    for i in range(total_chunks):
+        start_count = (i * chunk_size) + 1
+        end_count = min((i + 1) * chunk_size, total_media)
+        target_page = (i * chunk_size) // 5 
+        btn_text = f"📂 Media {start_count} - {end_count}"
+        markup.add(InlineKeyboardButton(btn_text, callback_data=f"manage_page_{target_page}"))
+        
+    markup.add(InlineKeyboardButton("🚨 Wipe All Media 🚨", callback_data="wipe_media_init"))
+    return markup
+
 def generate_manage_markup(page):
     markup = InlineKeyboardMarkup()
     
@@ -201,6 +222,7 @@ def generate_manage_markup(page):
             nav_buttons.append(InlineKeyboardButton(" ", callback_data="ignore"))
             
         markup.row(*nav_buttons)
+        markup.add(InlineKeyboardButton("🔙 Back to Folders", callback_data="manage_divisions"))
         markup.add(InlineKeyboardButton("🚨 Wipe All Media 🚨", callback_data="wipe_media_init"))
     else:
         markup.add(InlineKeyboardButton("No media found.", callback_data="ignore"))
@@ -336,10 +358,25 @@ def handle_manage_media(message):
         return
         
     _, total_media, _ = get_stats()
-    text = f"📁 **Media Management**\nTotal pieces of media in library: {total_media}\n\n_Use the buttons below to preview, delete, or navigate._"
+    text = f"📁 **Media Folders**\nTotal pieces of media in library: {total_media}\n\n_Select a folder below to manage its contents._"
     
-    markup = generate_manage_markup(0)
+    markup = generate_divisions_markup()
     bot.reply_to(message, text, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "manage_divisions")
+def handle_manage_divisions(call):
+    if not is_admin(call.from_user.id):
+        return bot.answer_callback_query(call.id, "Unauthorized.")
+        
+    _, total_media, _ = get_stats()
+    markup = generate_divisions_markup()
+    text = f"📁 **Media Folders**\nTotal pieces of media in library: {total_media}\n\n_Select a folder below to manage its contents._"
+    
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        bot.answer_callback_query(call.id)
+    except:
+        bot.answer_callback_query(call.id)
 
 @bot.message_handler(commands=['delmedia'])
 def handle_delmedia_command(message):
@@ -429,7 +466,7 @@ def handle_wipe_init(call):
         
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("⚠️ YES, DELETE EVERYTHING ⚠️", callback_data="wipe_media_confirm"))
-    markup.add(InlineKeyboardButton("❌ Cancel", callback_data="manage_page_0"))
+    markup.add(InlineKeyboardButton("❌ Cancel", callback_data="manage_divisions"))
     
     bot.edit_message_text("🚨 **WARNING!** 🚨\nAre you sure you want to permanently wipe all media from the database? This action cannot be undone.", 
                           call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
