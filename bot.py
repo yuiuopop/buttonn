@@ -5,9 +5,9 @@ import os
 
 # --- Configuration ---
 # Replace with your actual Bot Token
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "8756272091:AAGEvJTyq0jPh1aFzDeYhvZ39c1D-TGCEok"
 # Add your Telegram User ID here so you have admin access
-ADMIN_USER_IDS = [123456789] 
+ADMIN_USER_IDS = [8305774350] 
 
 DB_PATH = "bot_data.db"
 bot = telebot.TeleBot(BOT_TOKEN)
