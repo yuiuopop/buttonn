@@ -5,9 +5,9 @@ import os
 
 # --- Configuration ---
 # Replace with your actual Bot Token
-BOT_TOKEN = "8756272091:AAGEvJTyq0jPh1aFzDeYhvZ39c1D-TGCEok"
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 # Add your Telegram User ID here so you have admin access
-ADMIN_USER_IDS = [8305774350] 
+ADMIN_USER_IDS = [123456789] 
 
 DB_PATH = "bot_data.db"
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -130,13 +130,9 @@ def handle_start(message):
     # Load Main Menu (ID 1)
     render_menu(message.chat.id, menu_id=1)
 
-@bot.callback_query_handler(func=lambda call: True)
+@bot.callback_query_handler(func=lambda call: not call.data.startswith("admin_"))
 def handle_dynamic_callback(call):
     data = call.data
-    # Bypass admin callbacks
-    if data.startswith("admin_"):
-        bot.answer_callback_query(call.id)
-        return
 
     action_type, *action_data_parts = data.split(":", 1)
     action_data = action_data_parts[0] if action_data_parts else ""
@@ -195,8 +191,8 @@ def admin_callback_handler(call):
         bot.edit_message_text("Select a menu to edit:", chat_id=chat_id, message_id=call.message.message_id, reply_markup=markup)
         
     elif data == "admin_create_menu":
-        bot.send_message(chat_id, "Please enter the internal name for this new menu (e.g., 'Help Menu'):")
-        bot.register_next_step_handler_by_chat_id(chat_id, process_menu_name)
+        msg = bot.send_message(chat_id, "Please enter the internal name for this new menu (e.g., 'Help Menu'):")
+        bot.register_next_step_handler(msg, process_menu_name)
         
     elif data.startswith("admin_view_menu:"):
         menu_id = int(data.split(":")[1])
@@ -217,8 +213,8 @@ def admin_callback_handler(call):
     elif data.startswith("admin_add_btn:"):
         menu_id = int(data.split(":")[1])
         admin_states[chat_id] = {'menu_id': menu_id}
-        bot.send_message(chat_id, "What should the text of the button be?")
-        bot.register_next_step_handler_by_chat_id(chat_id, process_btn_text)
+        msg = bot.send_message(chat_id, "What should the text of the button be?")
+        bot.register_next_step_handler(msg, process_btn_text)
         
     elif data.startswith("admin_preview:"):
         menu_id = int(data.split(":")[1])
@@ -286,16 +282,16 @@ def process_btn_action(call):
     if action_type == "nav":
         menus = execute_query("SELECT id, name FROM menus", fetchall=True)
         m_str = "\n".join([f"ID {m[0]}: {m[1]}" for m in menus])
-        bot.send_message(chat_id, f"Available Menus:\n{m_str}\n\nPlease reply with the ID of the menu to navigate to:")
-        bot.register_next_step_handler_by_chat_id(chat_id, process_btn_data)
+        msg = bot.send_message(chat_id, f"Available Menus:\n{m_str}\n\nPlease reply with the ID of the menu to navigate to:")
+        bot.register_next_step_handler(msg, process_btn_data)
         
     elif action_type == "url":
-        bot.send_message(chat_id, "Please reply with the full URL (e.g., https://google.com):")
-        bot.register_next_step_handler_by_chat_id(chat_id, process_btn_data)
+        msg = bot.send_message(chat_id, "Please reply with the full URL (e.g., https://google.com):")
+        bot.register_next_step_handler(msg, process_btn_data)
         
     elif action_type == "msg":
-        bot.send_message(chat_id, "Please reply with the text to show when the button is clicked:")
-        bot.register_next_step_handler_by_chat_id(chat_id, process_btn_data)
+        msg = bot.send_message(chat_id, "Please reply with the text to show when the button is clicked:")
+        bot.register_next_step_handler(msg, process_btn_data)
 
 def process_btn_data(message):
     if not message.text: return
