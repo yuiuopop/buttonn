@@ -65,6 +65,8 @@ def init_db():
     except: pass
     try: cursor.execute("ALTER TABLE media ADD COLUMN category_id INTEGER DEFAULT 1")
     except: pass
+    try: cursor.execute("ALTER TABLE categories ADD COLUMN req_referrals INTEGER DEFAULT 0")
+    except: pass
 
     # Seed Default Category to prevent breakage
     cursor.execute("SELECT id FROM categories LIMIT 1")
@@ -104,11 +106,33 @@ def update_media_received(user_id):
     cursor.execute("UPDATE users SET media_received = media_received + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
 
+def get_total_referrals(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users WHERE referred_by = ?", (user_id,))
+    res = cursor.fetchone()
+    return res[0] if res else 0
+
 def get_categories():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM categories")
     return cursor.fetchall()
+    
+def get_category_req(cat_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT req_referrals FROM categories WHERE id = ?", (cat_id,))
+        res = cursor.fetchone()
+        return res[0] if res and res[0] else 0
+    except: return 0
+
+def update_category_req(cat_id, limit):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE categories SET req_referrals = ? WHERE id = ?", (limit, cat_id))
+    conn.commit()
 
 def add_category(name):
     conn = get_db()
@@ -203,7 +227,8 @@ def get_admin_panel_markup():
     markup.add(InlineKeyboardButton("📊 User Stats", callback_data="admin_stats"))
     markup.row(InlineKeyboardButton("➕ New Category", callback_data="admin_newcat"), 
                InlineKeyboardButton("🏷️ Set Upload Category", callback_data="admin_setcat"))
-    markup.add(InlineKeyboardButton("📁 Manage Media", callback_data="manage_cats"))
+    markup.row(InlineKeyboardButton("📁 Manage Media", callback_data="manage_cats"),
+               InlineKeyboardButton("⚙️ Category Limits", callback_data="admin_limits"))
     return markup
 
 def generate_divisions_markup(cat_id):
@@ -399,8 +424,15 @@ def process_media_request(message, cat_id, cat_name, admin_mode):
     user_id = message.from_user.id
     points = get_points(user_id)
     
-    if not admin_mode and points < MEDIA_COST:
-        return bot.reply_to(message, f"❌ You don't have enough points left!\nClick '🔗 Referral' to get your invite link.")
+    if not admin_mode:
+        req_refs = get_category_req(cat_id)
+        if req_refs > 0:
+            actual_refs = get_total_referrals(user_id)
+            if actual_refs < req_refs:
+                return bot.reply_to(message, f"🔒 **Access Denied!**\n\nThe `{cat_name}` category requires at least **{req_refs} successful referrals** to unlock.\nYou currently have {actual_refs} referrals.\n\nUse your `🔗 Referral` link to invite more friends!", parse_mode="Markdown")
+                
+        if points < MEDIA_COST:
+            return bot.reply_to(message, f"❌ You don't have enough points left!\nClick '🔗 Referral' to get your invite link.")
         
     media = get_random_media(cat_id)
     if not media:
@@ -422,6 +454,43 @@ def process_media_request(message, cat_id, cat_name, admin_mode):
         else: bot.send_document(user_id, file_id, caption=caption_text)
     except:
         if not admin_mode: update_points(user_id, MEDIA_COST)
+
+# ================= Admin Callbacks =================
+@bot.callback_query_handler(func=lambda call: call.data == "admin_limits")
+def cb_admin_limits(call):
+    if not is_admin(call.from_user.id): return bot.answer_callback_query(call.id, "Unauthorized")
+    cats = get_categories()
+    markup = InlineKeyboardMarkup()
+    for c_id, c_name in cats: 
+        reqs = get_category_req(c_id)
+        markup.add(InlineKeyboardButton(f"{c_name} (Req: {reqs} refs)", callback_data=f"manage_req_{c_id}"))
+    markup.add(InlineKeyboardButton("🔙 Back", callback_data="admin_panel_back"))
+    bot.edit_message_text("⚙️ **Category Limits**\nSelect a category to change its referral requirements:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("manage_req_"))
+def cb_manage_req(call):
+    if not is_admin(call.from_user.id): return bot.answer_callback_query(call.id, "Unauthorized")
+    cat_id = int(call.data.split('_')[2])
+    cats = get_categories()
+    cat_name = next((c[1] for c in cats if c[0] == cat_id), "Unknown")
+    
+    bot.answer_callback_query(call.id)
+    bot.send_message(call.message.chat.id, f"⚙️ To change the referral requirement for **{cat_name}**, type:\n`/setreq {cat_id} <limit>`\n_Example: /setreq {cat_id} 5_", parse_mode="Markdown")
+
+@bot.message_handler(commands=['setreq'])
+def handle_setreq(message):
+    if not is_admin(message.from_user.id): return
+    args = message.text.split()
+    if len(args) != 3:
+        return bot.reply_to(message, "Usage: `/setreq <CategoryID> <Limit>`\nYou can get the Category ID from the Category Limits menu.", parse_mode="Markdown")
+    try:
+        cat_id = int(args[1])
+        limit = int(args[2])
+        update_category_req(cat_id, limit)
+        bot.reply_to(message, f"✅ Done! The category now requires **{limit}** referrals to access.", parse_mode="Markdown")
+    except:
+        bot.reply_to(message, "Invalid number.")
 
 # ================= Admin Callbacks =================
 @bot.callback_query_handler(func=lambda call: call.data == "admin_stats")
